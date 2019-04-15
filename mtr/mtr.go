@@ -33,6 +33,129 @@ type MTRHup struct {
 	Wrst      float64 `json:"Wrst"`
 }
 
+func RunMTRWithNoRetryPing(src, dst string, maxHops, count, maxUnknowns int, timeout time.Duration) (MTRReport, error) {
+	srcIP := net.ParseIP(src)
+	if srcIP == nil {
+		return MTRReport{}, errors.New("Unknown source IP")
+	}
+	dstIP := net.ParseIP(dst)
+	if dstIP == nil {
+		return MTRReport{}, errors.New("Unknown dest IP")
+	}
+	report := MTRReport{
+		Src:   src,
+		Dst:   dst,
+		Count: count,
+	}
+	t := &traceroute.Tracer{
+		Config: traceroute.Config{
+			Delay:    10 * time.Millisecond,
+			Timeout:  timeout,
+			MaxHops:  maxHops,
+			Count:    1,
+			Networks: []string{"ip4:icmp"},
+			Addr:     &net.IPAddr{IP: srcIP},
+		},
+	}
+	defer t.Close()
+	routes := map[int]*traceroute.Reply{}
+	if err := t.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
+		if ex, ok := routes[reply.Hops]; ok {
+			log.Printf("Conflict. Hop: %v, newIP: %v, exIP: %v", reply.Hops, reply.IP, ex.IP)
+		} else {
+			routes[reply.Hops] = reply
+		}
+	}); err != nil {
+		return report, err
+	}
+
+	report.Time = time.Now().Unix()
+	// trace first
+	hups := map[int]*MTRHup{}
+	var unknownCount int
+	for i := 1; i <= maxHops; i++ {
+		if r, ok := routes[i]; ok {
+			rtt := r.RTT.Seconds() * 1000
+			hups[i] = &MTRHup{
+				Count:     i,
+				Host:      r.IP.String(),
+				Snt:       1,
+				LossPoint: 0,
+				Last:      rtt,
+				Avg:       rtt,
+				Best:      rtt,
+				Wrst:      rtt,
+			}
+			unknownCount = 0
+			if r.IP.String() == dstIP.String() {
+				break
+			}
+		} else {
+			hups[i] = &MTRHup{
+				Count:     i,
+				Host:      "???",
+				Snt:       1,
+				LossPoint: 1,
+				Last:      0,
+				Avg:       0,
+				Best:      0,
+				Wrst:      0,
+			}
+			unknownCount++
+		}
+		h := hups[i]
+		h.Loss = float64(h.LossPoint) / float64(h.Snt)
+		hups[i] = h
+		if unknownCount >= maxUnknowns {
+			break
+		}
+		if h.Host == dst {
+			break
+		}
+	}
+
+	// ping
+	hupsLen := len(hups)
+	for i := 1; i <= hupsLen; i++ {
+		hup := hups[i]
+		for j := 1; j <= count-1; j++ {
+			var rp *traceroute.Reply
+			var err error
+			hup.Snt++
+			if hup.Host != "???" {
+				rp, err = ping(t, hup.Host, t.MaxHops, t.Timeout)
+				if err == nil && rp != nil {
+					rtt := rp.RTT.Seconds() * 1000
+					hup.Last = rtt
+					hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
+					if hup.Best > rtt {
+						hup.Best = rtt
+					}
+					if hup.Wrst < rtt {
+						hup.Wrst = rtt
+					}
+				} else {
+					if err != nil {
+						log.Println(err)
+					}
+					hup.LossPoint++
+				}
+			}
+		}
+		// log.Println(hup)
+		if hup.Host != "???" {
+			hup.Loss = float64(hup.LossPoint) / float64(hup.Snt)
+		}
+
+	}
+
+	for i := 1; i <= hupsLen; i++ {
+		v := hups[i]
+		report.Hups = append(report.Hups, *v)
+	}
+	return report, nil
+}
+
 func RunMTR(src, dst string, maxHops, count, maxUnknowns int, timeout time.Duration) (MTRReport, error) {
 	srcIP := net.ParseIP(src)
 	if srcIP == nil {
@@ -87,7 +210,7 @@ func RunMTR(src, dst string, maxHops, count, maxUnknowns int, timeout time.Durat
 				Wrst:      rtt,
 			}
 			unknownCount = 0
-			if r.IP.String() == dst {
+			if r.IP.String() == dstIP.String() {
 				break
 			}
 		} else {
@@ -109,7 +232,7 @@ func RunMTR(src, dst string, maxHops, count, maxUnknowns int, timeout time.Durat
 		if unknownCount >= maxUnknowns {
 			break
 		}
-		if h.Host == dstIP.String() {
+		if h.Host == dst {
 			break
 		}
 	}
@@ -118,71 +241,70 @@ func RunMTR(src, dst string, maxHops, count, maxUnknowns int, timeout time.Durat
 	hupsLen := len(hups)
 	for i := 1; i <= hupsLen; i++ {
 		hup := hups[i]
-		go func() {
-			to := t.Timeout
-			var retryTime int
-			var workTimeout time.Duration
-			var comeback bool
-			for j := 1; j <= count-1; j++ {
-				var rp *traceroute.Reply
-				var err error
-				hup.Snt++
-				if hup.Host != "???" {
-					if comeback {
-						rp, err = ping(t, hup.Host, hup.Count, workTimeout)
-					} else {
-						rp, err = ping(t, hup.Host, t.MaxHops, t.Timeout)
+		to := t.Timeout
+		var retryTime int
+		var workTimeout time.Duration
+		var comeback bool
+		for j := 1; j <= count-1; j++ {
+			var rp *traceroute.Reply
+			var err error
+			hup.Snt++
+			if hup.Host != "???" {
+				if comeback {
+					rp, err = ping(t, hup.Host, hup.Count, workTimeout)
+				} else {
+					rp, err = ping(t, hup.Host, t.MaxHops, t.Timeout)
+				}
+				if err == nil && rp != nil {
+					rtt := rp.RTT.Seconds() * 1000
+					hup.Last = rtt
+					hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
+					if hup.Best > rtt {
+						hup.Best = rtt
 					}
-					if err == nil && rp != nil {
-						rtt := rp.RTT.Seconds() * 1000
-						hup.Last = rtt
-						hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
-						if hup.Best > rtt {
-							hup.Best = rtt
-						}
-						if hup.Wrst < rtt {
-							hup.Wrst = rtt
-						}
-					} else {
-						if err != nil {
-							log.Println(err)
-						}
-						hup.LossPoint++
+					if hup.Wrst < rtt {
+						hup.Wrst = rtt
 					}
 				} else {
-					if retryTime >= 4 {
-						continue
+					if err != nil {
+						log.Println(err)
 					}
-					if rp, err = ping(t, dstIP.String(), hup.Count, to); err == nil && rp != nil {
-						comeback = true
-						workTimeout = to
-						hup.Host = rp.IP.String()
-						rtt := rp.RTT.Seconds() * 1000
-						hup.Last = rtt
-						hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
-						if hup.Best > rtt {
-							hup.Best = rtt
-						}
-						if hup.Wrst < rtt {
-							hup.Wrst = rtt
-						}
-					} else {
-						if err != nil {
-							log.Println(err)
-						}
-						if to < time.Second*5 {
-							to += time.Second
-						}
-						hup.LossPoint++
-					}
-					retryTime++
+					hup.LossPoint++
 				}
+			} else {
+				if retryTime >= 4 {
+					continue
+				}
+				if rp, err = ping(t, dstIP.String(), hup.Count, to); err == nil && rp != nil {
+					comeback = true
+					workTimeout = to
+					hup.Host = rp.IP.String()
+					rtt := rp.RTT.Seconds() * 1000
+					hup.Last = rtt
+					hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
+					if hup.Best > rtt {
+						hup.Best = rtt
+					}
+					if hup.Wrst < rtt {
+						hup.Wrst = rtt
+					}
+				} else {
+					if err != nil {
+						log.Println("xxx", err)
+					}
+					if to < time.Second*5 {
+						to += time.Second
+					}
+					hup.LossPoint++
+				}
+				retryTime++
 			}
-			// log.Println(hup)
-			if hup.Host != "???" {
-				hup.Loss = float64(hup.LossPoint) / float64(hup.Snt)
-			}
-		}()
+		}
+		// log.Println(hup)
+		if hup.Host != "???" {
+			hup.Loss = float64(hup.LossPoint) / float64(hup.Snt)
+		}
+
 	}
 
 	for i := 1; i <= hupsLen; i++ {
@@ -193,7 +315,7 @@ func RunMTR(src, dst string, maxHops, count, maxUnknowns int, timeout time.Durat
 	return report, nil
 }
 
-func RunMTRCocurrent(src, dst string, maxHops, count, maxUnknowns int, timeout time.Duration) (MTRReport, error) {
+func RunMTRWithCocurrentPing(src, dst string, maxHops, count, maxUnknowns int, timeout time.Duration) (MTRReport, error) {
 	srcIP := net.ParseIP(src)
 	if srcIP == nil {
 		return MTRReport{}, errors.New("Unknown source IP")
@@ -247,7 +369,7 @@ func RunMTRCocurrent(src, dst string, maxHops, count, maxUnknowns int, timeout t
 				Wrst:      rtt,
 			}
 			unknownCount = 0
-			if r.IP.String() == dst {
+			if r.IP.String() == dstIP.String() {
 				break
 			}
 		} else {
@@ -269,7 +391,7 @@ func RunMTRCocurrent(src, dst string, maxHops, count, maxUnknowns int, timeout t
 		if unknownCount >= maxUnknowns {
 			break
 		}
-		if h.Host == dstIP.String() {
+		if h.Host == dst {
 			break
 		}
 	}
@@ -368,14 +490,13 @@ func ping(t *traceroute.Tracer, ip string, ttl int, timeout time.Duration) (r *t
 	if err != nil {
 		return
 	}
-	for {
-		select {
-		case r = <-sess.Receive():
-			return
-		case <-time.After(timeout):
-			return
-		}
+	select {
+	case r = <-sess.Receive():
+		return
+	case <-time.After(timeout):
+		return
 	}
+
 }
 
 // ToJSON convert struct to JSON

@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	r, err := mtr.RunMTR("0.0.0.0", os.Args[1], 30, 20, 5, time.Second*1)
+	r, err := mtr.RunMTRWithNoRetryPing("0.0.0.0", os.Args[1], 30, 20, 5, time.Second*1)
 	j, err2 := r.ToJSON()
 	if err != nil {
 		fmt.Println(err)
