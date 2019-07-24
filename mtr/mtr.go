@@ -499,13 +499,22 @@ func ping(t *traceroute.Tracer, ip string, ttl int, timeout time.Duration) (r *t
 
 }
 
-// ToJSON convert struct to JSON
+// ToJSON convert struct to JSON String
 func (r MTRReport) ToJSON() (string, error) {
 	if b, err := json.Marshal(r); err != nil {
 		return "", err
 	} else {
 		return string(b), nil
 	}
+}
+
+// ToRawJSON convert struct to JSON Object (Bytes)
+func (r MTRReport) ToRawJSON() ([]byte, error) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // PrettyPrint print the MTR report in format
