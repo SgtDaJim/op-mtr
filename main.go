@@ -9,7 +9,12 @@ import (
 )
 
 func main() {
-	r, err := mtr.RunMTRWithNoRetryPing("0.0.0.0", os.Args[1], 30, 20, 5, time.Second*1)
+	opmtr, err1 := mtr.NewOPMTR("0.0.0.0", 30, 20, 5, time.Second*1)
+	if err1 != nil {
+		fmt.Println(err1)
+		return
+	}
+	r, err := opmtr.RunMTRWithCocurrentPing(os.Args[1])
 	j, err2 := r.ToJSON()
 	if err != nil {
 		fmt.Println(err)
