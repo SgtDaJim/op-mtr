@@ -278,21 +278,36 @@ func (op *OPMTR) RunMTR(dst string) (MTRReport, error) {
 					continue
 				}
 				if rp, err = ping(op.tracer, dstIP.String(), hup.Count, to); err == nil && rp != nil {
-					comeback = true
-					workTimeout = to
-					hup.Host = rp.IP.String()
-					rtt := rp.RTT.Seconds() * 1000
-					hup.Last = rtt
-					hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
-					if hup.Best > rtt {
-						hup.Best = rtt
+					hupsCopy := hups
+					toComeback := true
+					for _, v := range hupsCopy {
+						if v.Host == rp.IP.String() {
+							toComeback = false
+							break
+						}
 					}
-					if hup.Wrst < rtt {
-						hup.Wrst = rtt
+					if toComeback {
+						comeback = true
+						workTimeout = to
+						hup.Host = rp.IP.String()
+						rtt := rp.RTT.Seconds() * 1000
+						hup.Last = rtt
+						hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
+						if hup.Best > rtt {
+							hup.Best = rtt
+						}
+						if hup.Wrst < rtt {
+							hup.Wrst = rtt
+						}
+					} else {
+						if to < time.Second*5 {
+							to += time.Second
+						}
+						hup.LossPoint++
 					}
 				} else {
 					if err != nil {
-						log.Println("xxx", err)
+						log.Println(err)
 					}
 					if to < time.Second*5 {
 						to += time.Second
@@ -426,17 +441,32 @@ func (op *OPMTR) RunMTRWithCocurrentPing(dst string) (MTRReport, error) {
 						continue
 					}
 					if rp, err = ping(op.tracer, dstIP.String(), hup.Count, to); err == nil && rp != nil {
-						comeback = true
-						workTimeout = to
-						hup.Host = rp.IP.String()
-						rtt := rp.RTT.Seconds() * 1000
-						hup.Last = rtt
-						hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
-						if hup.Best > rtt {
-							hup.Best = rtt
+						hupsCopy := hups
+						toComeback := true
+						for _, v := range hupsCopy {
+							if v.Host == rp.IP.String() {
+								toComeback = false
+								break
+							}
 						}
-						if hup.Wrst < rtt {
-							hup.Wrst = rtt
+						if toComeback {
+							comeback = true
+							workTimeout = to
+							hup.Host = rp.IP.String()
+							rtt := rp.RTT.Seconds() * 1000
+							hup.Last = rtt
+							hup.Avg = (hup.Avg*(hup.Snt-1) + rtt) / hup.Snt
+							if hup.Best > rtt {
+								hup.Best = rtt
+							}
+							if hup.Wrst < rtt {
+								hup.Wrst = rtt
+							}
+						} else {
+							if to < time.Second*5 {
+								to += time.Second
+							}
+							hup.LossPoint++
 						}
 					} else {
 						if err != nil {
@@ -509,15 +539,22 @@ func (r MTRReport) PrettyPrint() {
 	fmt.Printf("Time: %s\tSrc: %s\tDst: %s\tCount: %d\n", time.Unix(r.Time, 0).String(), r.Src, r.Dst, r.Count)
 	fmt.Printf("%4s    %-20s %5s%%  %4s  %6s  %6s  %6s  %6s\n", "HOP:|", "Address", "Loss", "Snt", "Last", "Avg", "Best", "Wrst")
 	for _, h := range r.Hups {
-		fmt.Printf("%3d:|-- %-20s %5.1f%%  %4v  %6.1f  %6.1f  %6.1f  %6.1f\n",
-			h.Count,
-			h.Host,
-			h.Loss*100.0,
-			h.Snt,
-			h.Last,
-			h.Avg,
-			h.Best,
-			h.Wrst,
-		)
+		if h.Host != "???" {
+			fmt.Printf("%3d:|-- %-20s %5.1f%%  %4v  %6.1f  %6.1f  %6.1f  %6.1f\n",
+				h.Count,
+				h.Host,
+				h.Loss*100.0,
+				h.Snt,
+				h.Last,
+				h.Avg,
+				h.Best,
+				h.Wrst,
+			)
+		} else {
+			fmt.Printf("%3d:|-- %-20s\n",
+				h.Count,
+				h.Host,
+			)
+		}
 	}
 }
