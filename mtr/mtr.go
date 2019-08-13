@@ -34,7 +34,7 @@ type MTRHup struct {
 }
 
 type OPMTR struct {
-	tracer      *traceroute.Tracer
+	Tracer      *traceroute.Tracer
 	MaxUnknowns int
 	PingCount   int
 }
@@ -45,7 +45,7 @@ func NewOPMTR(src string, maxHops, count, maxUnknowns int, timeout time.Duration
 		return nil, errors.New("Unknown source IP")
 	}
 	op := &OPMTR{
-		tracer: &traceroute.Tracer{
+		Tracer: &traceroute.Tracer{
 			Config: traceroute.Config{
 				Delay:    10 * time.Millisecond,
 				Timeout:  timeout,
@@ -62,7 +62,7 @@ func NewOPMTR(src string, maxHops, count, maxUnknowns int, timeout time.Duration
 }
 
 func (op *OPMTR) Close() {
-	op.tracer.Close()
+	op.Tracer.Close()
 }
 
 func (op *OPMTR) RunMTRWithNoRetryPing(dst string) (MTRReport, error) {
@@ -71,12 +71,12 @@ func (op *OPMTR) RunMTRWithNoRetryPing(dst string) (MTRReport, error) {
 		return MTRReport{}, errors.New("Unknown dest IP")
 	}
 	report := MTRReport{
-		Src:   op.tracer.Addr.String(),
+		Src:   op.Tracer.Addr.String(),
 		Dst:   dst,
 		Count: op.PingCount,
 	}
 	routes := map[int]*traceroute.Reply{}
-	if err := op.tracer.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
+	if err := op.Tracer.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
 		if ex, ok := routes[reply.Hops]; ok {
 			log.Printf("Conflict. Hop: %v, newIP: %v, exIP: %v", reply.Hops, reply.IP, ex.IP)
 		} else {
@@ -90,7 +90,7 @@ func (op *OPMTR) RunMTRWithNoRetryPing(dst string) (MTRReport, error) {
 	// trace first
 	hups := map[int]*MTRHup{}
 	var unknownCount int
-	for i := 1; i <= op.tracer.MaxHops; i++ {
+	for i := 1; i <= op.Tracer.MaxHops; i++ {
 		if r, ok := routes[i]; ok {
 			rtt := r.RTT.Seconds() * 1000
 			hups[i] = &MTRHup{
@@ -140,7 +140,7 @@ func (op *OPMTR) RunMTRWithNoRetryPing(dst string) (MTRReport, error) {
 			var err error
 			hup.Snt++
 			if hup.Host != "???" {
-				rp, err = ping(op.tracer, hup.Host, op.tracer.MaxHops, op.tracer.Timeout)
+				rp, err = ping(op.Tracer, hup.Host, op.Tracer.MaxHops, op.Tracer.Timeout)
 				if err == nil && rp != nil {
 					rtt := rp.RTT.Seconds() * 1000
 					hup.Last = rtt
@@ -179,12 +179,12 @@ func (op *OPMTR) RunMTR(dst string) (MTRReport, error) {
 		return MTRReport{}, errors.New("Unknown dest IP")
 	}
 	report := MTRReport{
-		Src:   op.tracer.Addr.String(),
+		Src:   op.Tracer.Addr.String(),
 		Dst:   dst,
 		Count: op.PingCount,
 	}
 	routes := map[int]*traceroute.Reply{}
-	if err := op.tracer.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
+	if err := op.Tracer.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
 		if ex, ok := routes[reply.Hops]; ok {
 			log.Printf("Conflict. Hop: %v, newIP: %v, exIP: %v", reply.Hops, reply.IP, ex.IP)
 		} else {
@@ -198,7 +198,7 @@ func (op *OPMTR) RunMTR(dst string) (MTRReport, error) {
 	// trace first
 	hups := map[int]*MTRHup{}
 	var unknownCount int
-	for i := 1; i <= op.tracer.MaxHops; i++ {
+	for i := 1; i <= op.Tracer.MaxHops; i++ {
 		if r, ok := routes[i]; ok {
 			rtt := r.RTT.Seconds() * 1000
 			hups[i] = &MTRHup{
@@ -243,7 +243,7 @@ func (op *OPMTR) RunMTR(dst string) (MTRReport, error) {
 	hupsLen := len(hups)
 	for i := 1; i <= hupsLen; i++ {
 		hup := hups[i]
-		to := op.tracer.Timeout
+		to := op.Tracer.Timeout
 		var retryTime int
 		var workTimeout time.Duration
 		var comeback bool
@@ -253,9 +253,9 @@ func (op *OPMTR) RunMTR(dst string) (MTRReport, error) {
 			hup.Snt++
 			if hup.Host != "???" {
 				if comeback {
-					rp, err = ping(op.tracer, hup.Host, hup.Count, workTimeout)
+					rp, err = ping(op.Tracer, hup.Host, hup.Count, workTimeout)
 				} else {
-					rp, err = ping(op.tracer, hup.Host, op.tracer.MaxHops, op.tracer.Timeout)
+					rp, err = ping(op.Tracer, hup.Host, op.Tracer.MaxHops, op.Tracer.Timeout)
 				}
 				if err == nil && rp != nil {
 					rtt := rp.RTT.Seconds() * 1000
@@ -277,7 +277,7 @@ func (op *OPMTR) RunMTR(dst string) (MTRReport, error) {
 				if retryTime >= 4 {
 					continue
 				}
-				if rp, err = ping(op.tracer, dstIP.String(), hup.Count, to); err == nil && rp != nil {
+				if rp, err = ping(op.Tracer, dstIP.String(), hup.Count, to); err == nil && rp != nil {
 					hupsCopy := hups
 					toComeback := true
 					for _, v := range hupsCopy {
@@ -338,12 +338,12 @@ func (op *OPMTR) RunMTRWithCocurrentPing(dst string) (MTRReport, error) {
 		return MTRReport{}, errors.New("Unknown dest IP")
 	}
 	report := MTRReport{
-		Src:   op.tracer.Addr.String(),
+		Src:   op.Tracer.Addr.String(),
 		Dst:   dst,
 		Count: op.PingCount,
 	}
 	routes := map[int]*traceroute.Reply{}
-	if err := op.tracer.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
+	if err := op.Tracer.Trace(context.Background(), dstIP, func(reply *traceroute.Reply) {
 		if ex, ok := routes[reply.Hops]; ok {
 			log.Printf("Conflict. Hop: %v, newIP: %v, exIP: %v", reply.Hops, reply.IP, ex.IP)
 		} else {
@@ -357,7 +357,7 @@ func (op *OPMTR) RunMTRWithCocurrentPing(dst string) (MTRReport, error) {
 	// trace first
 	hups := map[int]*MTRHup{}
 	var unknownCount int
-	for i := 1; i <= op.tracer.MaxHops; i++ {
+	for i := 1; i <= op.Tracer.MaxHops; i++ {
 		if r, ok := routes[i]; ok {
 			rtt := r.RTT.Seconds() * 1000
 			hups[i] = &MTRHup{
@@ -406,7 +406,7 @@ func (op *OPMTR) RunMTRWithCocurrentPing(dst string) (MTRReport, error) {
 		hup := hups[i]
 		go func() {
 			defer wg.Done()
-			to := op.tracer.Timeout
+			to := op.Tracer.Timeout
 			var retryTime int
 			var workTimeout time.Duration
 			var comeback bool
@@ -416,9 +416,9 @@ func (op *OPMTR) RunMTRWithCocurrentPing(dst string) (MTRReport, error) {
 				hup.Snt++
 				if hup.Host != "???" {
 					if comeback {
-						rp, err = ping(op.tracer, hup.Host, hup.Count, workTimeout)
+						rp, err = ping(op.Tracer, hup.Host, hup.Count, workTimeout)
 					} else {
-						rp, err = ping(op.tracer, hup.Host, op.tracer.MaxHops, op.tracer.Timeout)
+						rp, err = ping(op.Tracer, hup.Host, op.Tracer.MaxHops, op.Tracer.Timeout)
 					}
 					if err == nil && rp != nil {
 						rtt := rp.RTT.Seconds() * 1000
@@ -440,7 +440,7 @@ func (op *OPMTR) RunMTRWithCocurrentPing(dst string) (MTRReport, error) {
 					if retryTime >= 4 {
 						continue
 					}
-					if rp, err = ping(op.tracer, dstIP.String(), hup.Count, to); err == nil && rp != nil {
+					if rp, err = ping(op.Tracer, dstIP.String(), hup.Count, to); err == nil && rp != nil {
 						hupsCopy := hups
 						toComeback := true
 						for _, v := range hupsCopy {
